@@ -1,194 +1,114 @@
 # System Architecture
 
-This document describes the high-level architecture and design decisions for the **Medical Practice Operations Lakehouse**.  
-The goal is to provide a secure, scalable, and analytics-first data platform tailored to independent medical practitioners.
+![System Architecture Diagram](./diagrams/architecture.png)
 
-This architecture prioritizes **simplicity, security, and operational insight**, while remaining extensible for future production use.
+This document describes the architecture for a **multi-tenant healthcare analytics platform** designed for independent medical practices.  
 
----
-
-## 1. Architectural Overview
-
-The system is designed around a **modern AWS Lakehouse pattern**, where Amazon S3 serves as the system of record and analytics are performed directly on curated datasets using SQL-based engines.
-
-The platform follows a **batch-first ingestion model** optimized for:
-- Small to medium data volumes
-- Cost efficiency
-- Operational reporting use cases
-- Reduced architectural complexity for an MVP
-
-This project is intentionally **analytics-focused** and does not attempt to replace transactional or EHR systems.
+The system is built to provide **secure, scalable analytics** from operational, financial, and limited clinical datasets, while enforcing strict tenant isolation and PHI protection.
 
 ---
 
-## 2. High-Level Components
+## 1. High-Level Architecture Overview
 
-### Core Components
+The architecture uses a **AWS Lakehouse design with Medallion layers (Bronze / Silver / Gold)** and a **decoupled compute and storage model**.  
 
-- **Data Sources**
-  - Practice management systems (conceptual)
-  - Scheduling, billing, and administrative datasets
-  - Synthetic/mock data for portfolio purposes
+Data is ingested from Practice Management Systems (PMS) and EHR platforms, transformed through a pipeline that enforces schema and de-identification, and finally consumed by a secure React dashboard.
 
-- **Lakehouse Storage**
-  - Amazon S3 as the centralized data store
-  - Zone-based data organization (Raw, Cleaned, Curated)
-
-- **Data Processing**
-  - Batch ETL pipelines for standardization and validation
-  - Schema enforcement and basic data quality checks
-
-- **Analytics Layer**
-  - SQL-first query engines for reporting
-  - Optimized datasets for dashboard consumption
-
-- **Presentation Layer**
-  - Secure analytics dashboard
-  - Role-based access concepts
+Key design priorities:
+- Strong multi-tenant isolation
+- Minimal exposure of PHI
+- SQL-first analytics layer
+- Containerized ETL for portability and reproducibility
 
 ---
 
-## 3. Data Lakehouse Design
+## 2. Component Breakdown
 
-### Storage Zones
+### A. Ingestion ("Collector")
+- **Tech:** Python + Docker + AWS Fargate  
+- **Role:** Extracts raw JSON/CSV data from PMS or EHR systems and writes it to the Bronze layer in S3  
+- **Portfolio Value:** Demonstrates containerized ETL and handling of raw, unstructured data
 
-The data lakehouse is organized into three logical zones:
+### B. Storage ("Heart")
+- **Tech:** Amazon S3  
+- **Bronze Layer:** Raw, immutable files  
+- **Silver Layer:** Cleaned Parquet files with schema enforcement  
+- **Gold Layer:** Business-level aggregates (e.g., monthly revenue by doctor)  
+- **Portfolio Value:** Shows understanding of layered storage, cost-optimized Parquet files, and Medallion patterns
 
-#### Raw Zone
-- Immutable, append-only data
-- Minimal transformation
-- Represents the original shape of incoming data
-- Used for traceability and reprocessing
+### C. Processing & Analytics ("Brain")
+- **Tech:** AWS Glue + Amazon Athena + dbt-core  
+- **Role:** Athena provides serverless SQL queries; dbt manages transformations from Bronze → Silver → Gold  
+- **Portfolio Value:** Demonstrates SQL skills, data modeling, and pipeline orchestration
 
-#### Cleaned / Standardized Zone
-- Schema-normalized datasets
-- Basic data validation applied
-- Standard naming conventions enforced
-- PII handling rules applied where relevant
-
-#### Curated / Analytics Zone
-- Aggregated, analytics-ready tables
-- Optimized for query performance
-- Minimized exposure of sensitive fields
-- Designed around business and operational use cases
-
-This separation enables:
-- Clear data lineage
-- Easier debugging
-- Stronger governance and access control
+### D. Frontend Dashboard ("Face")
+- **Tech:** React app  
+- **Role:** Queries Gold tables via Athena and displays multi-tenant dashboards (Doctor, Admin, Practice Owner)  
+- **Portfolio Value:** Closes the loop from raw data to actionable insights
 
 ---
 
-## 4. Data Flow (Conceptual)
+## 3. Data Flow
 
-1. Data is ingested into the **Raw Zone** in Amazon S3
-2. Batch ETL jobs process raw data into standardized formats
-3. Cleaned datasets are written to the **Standardized Zone**
-4. Business logic and aggregations produce **Curated Analytics Tables**
-5. SQL queries power dashboards and reports
-
-> All data used in this project is synthetic and intended solely for demonstration.
+1. Python ETL container writes synthetic data to `s3://bucket/bronze/`  
+2. AWS Glue crawlers infer schema and update the Athena Catalog  
+3. dbt runs SQL transformations to create Silver and Gold tables  
+4. React frontend queries Gold tables filtered by `tenant_id` for multi-tenant views
 
 ---
 
-## 5. Analytics & Query Layer
+## 4. Security & Tenant Isolation
 
-The analytics layer is designed to be:
-- SQL-accessible
-- BI-friendly
-- Cost-efficient for small practices
+Even in a simplified architecture, security is fundamental:
 
-Key characteristics:
-- Queries executed directly against curated S3 datasets
-- Logical separation between operational and analytics queries
-- Read-only access for dashboard users
-
-This approach enables fast iteration while avoiding the overhead of managing a full data warehouse for an MVP.
+- Each practice’s data is **partitioned by `tenant_id`** in S3  
+- React dashboard queries include `WHERE tenant_id = 'X'` clauses  
+- In production, row-level security would be enforced via **IAM policies** or **AWS Lake Formation**  
+- PHI is de-identified in the Silver layer  
+- Encryption is applied at rest (S3 + KMS) and in transit  
+- All queries and data access can be audited via Athena logs and CloudTrail
 
 ---
 
-## 6. Security Architecture (High-Level)
+## 5. Technology Stack
 
-Security is treated as a **first-class architectural concern**, especially given the healthcare context.
-
-Key principles:
-- Encryption at rest and in transit
-- Least-privilege IAM access
-- Conceptual tenant isolation by practice
-- Role-based access to analytics outputs
-- Audit logging for data access
-
-Sensitive data handling is intentionally minimized, and analytics outputs favor aggregation over row-level exposure.
-
-> Detailed security considerations are documented separately in `SECURITY.md`.
+| Layer | Tool / Service | Purpose |
+|-------|---------------|--------|
+| Compute | Docker + AWS Fargate | Containerized ETL pipelines |
+| Storage | Amazon S3 (Parquet format) | Durable, low-cost storage with layered Medallion design |
+| Transformation | dbt-core | SQL-based transformations and documentation |
+| Analytics Engine | Amazon Athena | Serverless querying and cost efficiency |
+| Orchestration | AWS Glue | Schema inference, ETL coordination |
+| Frontend | React | Multi-role dashboards with tenant-specific views |
+| Caching | Optional: Redis / ElastiCache | Optimize frequent queries and dashboard performance |
 
 ---
 
-## 7. Multi-Tenancy Considerations
+## 6. Data Domains
 
-The architecture is designed with future **multi-tenant SaaS deployment** in mind.
+| Domain | In-Scope Data | Out-of-Scope |
+|--------|---------------|--------------|
+| Clinical (Limited) | Diagnosis codes (ICD-10), vitals trends, referral patterns | Full clinical notes, DICOM images, real-time telemetry |
+| Financial | Claim status, AR aging, revenue per CPT code | Payroll, tax filing, general ledger |
+| Operational | No-show rates, room utilization, wait times | Inventory / supply chain management |
 
-Conceptual approach:
-- Each practice is logically isolated via identifiers and access policies
-- Shared infrastructure with strict access boundaries
-- Aggregations scoped per tenant
-
-This allows the platform to scale from:
-- A single practitioner
-- To multiple independent practices
-- Without architectural redesign
+- External PMS/EHR data is **read-only**  
+- Dashboard allows limited write-back for internal annotations and goals
 
 ---
 
-## 8. Design Decisions & Tradeoffs
+## 7. Design Decisions
 
-### Batch Over Streaming
-- Lower complexity for MVP
-- Sufficient for operational reporting
-- Easier to reason about and debug
-
-### Lakehouse Over Traditional Warehouse
-- Lower cost
-- Greater schema flexibility
-- Better fit for evolving data models
-
-### Analytics-First Focus
-- Reduces regulatory risk
-- Faster time to insight
-- Clear scope boundaries
-
-These decisions are intentional and reflect real-world constraints faced by small healthcare practices.
+- **Bronze → Silver → Gold:** Enables clean lineage and schema enforcement  
+- **Athena over Redshift:** Pay-per-query engine keeps costs low and eliminates server management  
+- **dbt for transformations:** Provides reproducible, documented SQL pipelines  
+- **Docker + Fargate:** Ensures ETL portability and scalability  
+- **React frontend:** Flexible multi-role dashboards without introducing complex server-side logic
 
 ---
 
-## 9. Limitations & Non-Goals
+## 8. Disclaimer
 
-This architecture intentionally excludes:
-- Real-time clinical decision systems
-- Full EHR functionality
-- Transactional write-back systems
-- External system integrations
+This architecture is **portfolio-focused** and uses **synthetic datasets only**.  
 
-The focus is on **operational visibility**, not clinical record management.
-
----
-
-## 10. Future Evolution
-
-Potential architectural extensions include:
-- Near-real-time ingestion
-- Advanced governance and lineage tooling
-- AI-assisted analytics
-- Secure API access for integrations
-- Practice benchmarking across anonymized datasets
-
-These enhancements would be implemented in a production-grade environment separate from this portfolio repository.
-
----
-
-## 11. Disclaimer
-
-This architecture represents an **exploratory and educational design** created for portfolio purposes.  
-It does not claim regulatory compliance or production readiness.
-
-All datasets are synthetic and no real patient information is used.
+It demonstrates system design, multi-tenant handling, and pipeline orchestration without claiming production readiness or regulatory compliance.
