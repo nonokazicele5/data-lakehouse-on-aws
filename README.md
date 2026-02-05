@@ -163,7 +163,7 @@ This project showcases:
 
 ## 📌 Disclaimer
 
-This is a **portfolio and learning project**. All data is synthetic and no real patient information is used.
+This is a **portfolio**. All data is synthetic and no real patient information is used.
 
 ---
 
